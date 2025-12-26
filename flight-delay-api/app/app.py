@@ -3,7 +3,10 @@ from pydantic import BaseModel, Field
 from inference_pipeline import predict
 from fastapi import HTTPException
 
-app = FastAPI(title="Flight Delay Predictor")
+app = FastAPI(
+    title="Flight Delay Prediction API",
+    version="0.0.1"
+)
 
 class PredictionInput(BaseModel):
     aerolinea: str = Field(..., example="AZ")
