@@ -2,14 +2,19 @@ import joblib
 import pandas as pd
 import numpy as np
 from scipy import sparse
+from pathlib import Path
 
 # -----------------------------
 # CARGA DE ARTEFACTOS
 # -----------------------------
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+ARTIFACTS_DIR = BASE_DIR / "artifacts"
+
 def load_artifacts():
-    model = joblib.load("champion.pkl")
-    ohe = joblib.load("onehot_encoder.pkl")
-    scaler = joblib.load("scaler_logreg.pkl")
+    model = joblib.load(ARTIFACTS_DIR / "champion.pkl")
+    ohe = joblib.load(ARTIFACTS_DIR / "onehot_encoder.pkl")
+    scaler = joblib.load(ARTIFACTS_DIR / "scaler_logreg.pkl")
     return model, ohe, scaler
 
 model, ohe, scaler = load_artifacts()
