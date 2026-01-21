@@ -1,107 +1,124 @@
 import joblib
 import pandas as pd
-import numpy as np
-from scipy import sparse
 from pathlib import Path
+from typing import Dict, List
+from app.weather.fallback import apply_fallbacks
+from app.explainability.lime_service import get_top_3_influential_features
+
+# -----------------------------
+# RUTAS
+# -----------------------------
+BASE_DIR = Path(__file__).resolve().parent.parent
+ARTIFACTS_DIR = BASE_DIR / "artifacts" / "current"
 
 # -----------------------------
 # CARGA DE ARTEFACTOS
 # -----------------------------
-
-BASE_DIR = Path(__file__).resolve().parent.parent
-ARTIFACTS_DIR = BASE_DIR / "artifacts"
-
-def load_artifacts():
-    model = joblib.load(ARTIFACTS_DIR / "champion.pkl")
-    ohe = joblib.load(ARTIFACTS_DIR / "onehot_encoder.pkl")
-    scaler = joblib.load(ARTIFACTS_DIR / "scaler_logreg.pkl")
-
-    if not hasattr(model, "predict_proba"):
-        raise ValueError("El modelo cargado no tiene el método 'predict_proba'.")
-    
-    return model, ohe, scaler
-
-model, ohe, scaler = load_artifacts()
+model = joblib.load(ARTIFACTS_DIR / "champion_model_v2.pkl")
+ohe = joblib.load(ARTIFACTS_DIR / "onehot_encoder_v2.pkl")
+num_imputer = joblib.load(ARTIFACTS_DIR / "num_imputer_v2.pkl")
 
 # -----------------------------
 # DEFINICIÓN DE FEATURES
 # -----------------------------
-# dia_semana VA COMO CATEGÓRICA
-CATEGORICAL_FEATURES = ["aerolinea", "origen", "destino", "dia_semana"]
+CATEGORICAL_FEATURES = [
+    "aerolinea",
+    "origen",
+    "destino",
+    "dia_semana"
+]
 
-# SOLO las numéricas escaladas
-NUMERIC_FEATURES = ["distancia_km"]
-
-# Variables cíclicas (NO se escalan)
-CYCLIC_FEATURES = ["hora_sin", "hora_cos"]
+NUMERIC_FEATURES = [
+    "distancia_km",
+    "hora_decimal",
+    "temperatura",
+    "velocidad_viento",
+    "visibilidad"    
+]
 
 # -----------------------------
-# PREPROCESAMIENTO
+# PREPROCESAMIENTO BATCH
 # -----------------------------
-def preprocess(payload: dict):
-    df = pd.DataFrame([payload])
+def preprocess_batch(payloads):
+    if isinstance(payloads, list):
+        df = pd.DataFrame(payloads)
+    elif isinstance(payloads, pd.DataFrame):
+        df = payloads.copy()
+    else:
+        raise ValueError("payloads debe ser lista de dicts o DataFrame")
 
-    # -------------------------
-    # PARSE DATETIME
-    # -------------------------
-    dt = pd.to_datetime(df["fecha_partida"])
+    # Aplicar fallback fila por fila
+    df = df.apply(lambda row: apply_fallbacks(row.to_dict()), axis=1, result_type='expand')
+    df = df.drop(columns=["_fallback_used"], errors="ignore")  # CAMBIO: fix error 400
 
-    # Día de la semana (0=lunes, 6=domingo)
-    df["dia_semana"] = dt.dt.dayofweek.astype("int8")
+    # Fecha → hora_decimal y dia_semana
+    dt = pd.to_datetime(df["fecha_partida"], errors="coerce")
+    df["hora_decimal"] = dt.dt.hour + dt.dt.minute / 60
+    df["dia_semana"] = dt.dt.dayofweek
 
-    # -------------------------
-    # HORA CÍCLICA
-    # -------------------------
-    # Hora fraccional
-    hora_frac = (dt.dt.hour + dt.dt.minute / 60.0) / 24.0
+    # Columnas faltantes
+    for col in NUMERIC_FEATURES:
+        if col not in df.columns:
+            df[col] = 0.0
+    for col in CATEGORICAL_FEATURES:
+        if col not in df.columns:
+            df[col] = "UNKNOWN"
 
-    df["hora_sin"] = np.sin(2 * np.pi * hora_frac).astype("float32")
-    df["hora_cos"] = np.cos(2 * np.pi * hora_frac).astype("float32")
+    # Imputación numérica
+    df[NUMERIC_FEATURES] = num_imputer.transform(df[NUMERIC_FEATURES])
 
-    # -------------------------
-    # CATEGÓRICAS (One-Hot)
-    # -------------------------
+    # OHE categórico
     X_cat = ohe.transform(df[CATEGORICAL_FEATURES])
-    X_cat = sparse.csr_matrix(X_cat)
+    X_cat = pd.DataFrame(
+        X_cat,
+        columns=ohe.get_feature_names_out(CATEGORICAL_FEATURES),
+        index=df.index
+    )
 
-    # -------------------------
-    # NUMÉRICAS (ESCALADAS)
-    # -------------------------
-    X_num = df[NUMERIC_FEATURES].astype("float32")
-    X_num_sparse = sparse.csr_matrix(X_num.values)
-    X_num_scaled = scaler.transform(X_num_sparse)
-
-    # -------------------------
-    # CÍCLICAS (NO ESCALADAS)
-    # -------------------------
-    X_cyc = df[CYCLIC_FEATURES].astype("float32")
-    X_cyc = sparse.csr_matrix(X_cyc.values)
-
-    # -------------------------
-    # CONCATENACIÓN FINAL
-    # IMPORTANTE:
-    # El orden de concatenación debe coincidir EXACTAMENTE
-    # con el usado durante el entrenamiento
-    # ORDEN CRÍTICO
-    # -------------------------
-    X = sparse.hstack([
-        X_num_scaled,  # distancia_km
-        X_cyc,         # hora_sin, hora_cos
-        X_cat          # categóricas (incluye dia_semana)
-    ])
-
+    X_num = df[NUMERIC_FEATURES]
+    X = pd.concat([X_num, X_cat], axis=1)
     return X
 
 # -----------------------------
-# PREDICCIÓN
+# PREDICCIÓN SINGLE RECORD
 # -----------------------------
-def predict(payload: dict):
-    X = preprocess(payload)
+def predict(payload: Dict, explain: bool = False):
+    X = preprocess_batch([payload])  # Reusar batch prep
     proba = model.predict_proba(X)[0, 1]
 
-    prediction = "Retrasado" if proba >= 0.3 else "No Retrasado"
+    threshold = 0.35
+    prediction = "Retrasado" if proba >= threshold else "No Retrasado"
 
-    return {
+    result = {
         "prevision": prediction,
         "probabilidad": round(float(proba), 2)
     }
+
+    if explain:
+        lime_result = get_top_3_influential_features(X)
+        result['explicabilidad'] = {
+            'metodo': 'LIME',
+            'top_3_features': lime_result['top_3_features_influyentes']
+        }
+
+    return result
+
+# -----------------------------
+# PREDICCIÓN BATCH
+# -----------------------------
+def predict_batch(payloads: List[Dict]):
+    X = preprocess_batch(payloads)
+    probas = model.predict_proba(X)[:, 1]
+
+    threshold = 0.35
+    predictions = ["Retrasado" if p >= threshold else "No Retrasado" for p in probas]
+
+    results = []
+    for i, p in enumerate(probas):
+        result = {
+            "prevision": predictions[i],
+            "probabilidad": round(float(p), 2)
+            # No LIME en batch
+        }
+        results.append(result)
+    return results

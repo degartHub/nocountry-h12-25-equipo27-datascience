@@ -1,0 +1,45 @@
+name: CD - Deploy to VM
+
+on:
+  release:
+    types:
+      - published
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      - name: Prepare SSH
+        run: |
+          rm -f ~/.ssh
+          install -m 700 -d ~/.ssh
+
+          echo "${{ secrets.VM_SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+
+          ssh-keyscan -H ${{ secrets.VM_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy to VM
+        run: |
+          IMAGE_TAG=$(echo ${{ github.sha }} | cut -c1-7)
+
+          ssh ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }} << EOF
+            set -e
+
+            cd ~/flight-delay-api
+
+            export IMAGE_TAG=${IMAGE_TAG}
+
+            echo "Deploying image tag: \$IMAGE_TAG"
+
+            docker pull ghcr.io/wolganstark/flight-delay-api:\$IMAGE_TAG
+
+            docker compose up -d --force-recreate
+
+            echo "Deployment completed"
+          EOF
