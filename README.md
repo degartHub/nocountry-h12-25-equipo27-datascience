@@ -98,9 +98,10 @@ Asimismo, se generó un "classification report" para analizar de forma detallada
 - `/docs`: Documentación adicional (ej: planes, reportes).
 - `/models`: Modelos guardados (ej: archivos .joblib).
 - `/tests`: Pruebas unitarias.
+- `/flight-delay-api`: Carpeta para el despliegue de la API Rest.
 
 ## Requisitos
-- Python 3.8+
+- Python 3.11+
 - Librerías: `pip install pandas scikit-learn joblib`
 
 # Miembros del Equipo y Roles
