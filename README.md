@@ -84,12 +84,16 @@ El desempeño del modelo fue evaluado utilizando diversas métricas de clasifica
 - Recall
 - F1-score
 - ROC-AUC
-- 
+  
 Asimismo, se generó un "classification report" para analizar de forma detallada los resultados obtenidos. Finalmente, el modelo entrenado fue serializado utilizando joblib, permitiendo su posterior carga y utilización en otros entornos o aplicaciones.
 
 # Resultados
 
+El modelo seleccionado y realizado fue "Gradient Boosting Classifier", ya que presentó un mejor desempeño en comparación con otros modelos evaluados, como "Regresión Logística" y "Random Forest".
 
+Para mayor detalle sobre las métricas utilizadas en la selección del modelo, consultar el cuaderno "H12_25_L_Equipo_27_Data_Science.ipynb" disponible en el directorio "notebooks".
+
+El cuaderno "Notebook_Producto_Final.ipynb" contiene únicamente el modelo "Gradient Boosting Classifier", ya que fue el modelo definitivo utilizado en el proyecto.
 
 # Estructura del Repositorio
 - `/data`: Datasets utilizados
